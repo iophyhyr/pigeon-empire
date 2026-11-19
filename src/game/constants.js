@@ -29,6 +29,8 @@ export const DEPTH = {
   SHADOW: 25,
   PIGEON: 30,
   FLOATING: 40,
+  SHOP_DIM: 90,
   UI: 100,
-  TOAST: 110,
+  TOAST: 130,
+  SHOP: 120,
 };

@@ -12,8 +12,9 @@ const SHOP_BUTTON = { x: 1040, y: 96, width: 200, height: 72 };
  * (и на мобильных) ничего не обрезается.
  */
 export class Hud {
-  constructor(scene) {
+  constructor(scene, options = {}) {
     this.scene = scene;
+    this.onShop = options.onShop || null;
     this.crumbs = 0;
     this.income = 0;
     this.toast = null;
@@ -113,7 +114,10 @@ export class Hud {
       height,
       label: 'МАГАЗИН',
       fontSize: 26,
-      onClick: () => this.showToast('Магазин скоро откроется'),
+      onClick: () => {
+        if (this.onShop) this.onShop();
+        else this.showToast('Магазин скоро откроется');
+      },
     });
   }
 

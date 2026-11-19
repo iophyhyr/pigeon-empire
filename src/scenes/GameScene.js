@@ -2,24 +2,38 @@ import Phaser from 'phaser';
 
 import { SCENE_KEYS, GAME_WIDTH, DEPTH } from '../game/constants.js';
 import { COLORS, CSS } from '../game/palette.js';
+import { Economy } from '../game/economy.js';
 import { buildBackdrop } from '../world/Backdrop.js';
 import { Pepper } from '../objects/Pepper.js';
+import { ScoutPigeon } from '../objects/ScoutPigeon.js';
 import { Hud } from '../ui/Hud.js';
+import { ShopPanel } from '../ui/ShopPanel.js';
 
 const PEPPER_X = GAME_WIDTH / 2;
 const PEPPER_Y = 470;
 
+/** Разведчик стоит справа и чуть ниже Pepper — не перекрывает главного героя. */
+const SCOUT_X = 884;
+const SCOUT_Y = 486;
+
 /**
- * Основной игровой экран: крыша, Pepper, крошки, HUD.
- * Вся логика пока простая и живёт здесь: нажатие на Pepper → +1 крошка.
+ * Основной игровой экран: крыша, Pepper, крошки, экономика и HUD.
+ * Экономика живёт в отдельном модуле; сцена только связывает её с UI и объектами.
  */
 export class GameScene extends Phaser.Scene {
   constructor() {
     super(SCENE_KEYS.GAME);
   }
 
+  /** Удобный доступ к состоянию (например, из консоли браузера). */
+  get crumbs() {
+    return this.economy ? this.economy.crumbs : 0;
+  }
+
   create() {
-    this.crumbs = 0;
+    this.economy = new Economy();
+    this.scout = null;
+    this._unsubscribers = [];
 
     buildBackdrop(this);
 
@@ -32,17 +46,45 @@ export class GameScene extends Phaser.Scene {
 
     this.pepper = new Pepper(this, PEPPER_X, PEPPER_Y, () => this.collectCrumb());
 
-    this.hud = new Hud(this);
-    this.hud.setCrumbs(this.crumbs);
-    this.hud.setIncome(0);
+    this.hud = new Hud(this, { onShop: () => this.shop.open() });
+    this.shop = new ShopPanel(this, this.economy);
+
+    this._unsubscribers.push(
+      this.economy.onChange((state) => {
+        this.hud.setCrumbs(state.crumbs);
+        this.hud.setIncome(state.income);
+        this._syncScout(state);
+      }),
+    );
+
+    // Пассивный доход начисляется раз в секунду; при доходе 0 вызов ничего не меняет.
+    this.incomeTimer = this.time.addEvent({
+      delay: 1000,
+      loop: true,
+      callback: () => this.economy.tick(),
+    });
+
+    this.events.once('shutdown', () => this._cleanup());
   }
 
-  /** Начисление крошки: счётчик + всплывающий «+1». */
+  /** Клик по Pepper: +1 крошка, пульс счётчика и всплывающий «+1». */
   collectCrumb(amount = 1) {
-    this.crumbs += amount;
-    this.hud.setCrumbs(this.crumbs);
+    this.economy.addClicks(amount);
     this.hud.pulseCrumbs();
     this._spawnFloatingText(`+${amount}`);
+  }
+
+  /** Купленный разведчик появляется на крыше один раз и остаётся там. */
+  _syncScout(state) {
+    if (!state.pigeons.scout || this.scout) return;
+
+    this.add
+      .graphics()
+      .setDepth(DEPTH.SHADOW)
+      .fillStyle(COLORS.shadow, 0.16)
+      .fillEllipse(SCOUT_X, SCOUT_Y + 104, 142, 28);
+
+    this.scout = new ScoutPigeon(this, SCOUT_X, SCOUT_Y);
   }
 
   _spawnFloatingText(label) {
@@ -71,5 +113,12 @@ export class GameScene extends Phaser.Scene {
       ease: 'Cubic.easeOut',
       onComplete: () => text.destroy(),
     });
+  }
+
+  _cleanup() {
+    this._unsubscribers.forEach((unsubscribe) => unsubscribe());
+    this._unsubscribers = [];
+    if (this.incomeTimer) this.incomeTimer.remove();
+    if (this.shop) this.shop.destroy();
   }
 }

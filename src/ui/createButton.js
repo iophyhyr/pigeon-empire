@@ -38,6 +38,15 @@ export function createButton(scene, { x, y, width, height, label, onClick, fontS
 
   container.add([bg, text, hit]);
 
+  // Наружу отдаём текст и хит-зону: кнопку можно переподписать (магазин)
+  // и временно отключить ввод, когда окно скрыто.
+  container.labelText = text;
+  container.hit = hit;
+  container.setLabel = (value) => {
+    text.setText(value);
+    return container;
+  };
+
   hit.on('pointerover', () => {
     paint(COLORS.accentLight);
     container.setScale(1.03);
