@@ -15,9 +15,22 @@ export const SCENE_KEYS = {
   GAME: 'GameScene',
 };
 
-/** Ключи текстур в кэше Phaser (сами файлы грузятся в PreloadScene). */
+/**
+ * Ключи текстур в кэше Phaser (сами файлы грузятся в PreloadScene).
+ * WORKER_DISPLAY/GUARD_DISPLAY — runtime-копии с прозрачным фоном: исходные PNG
+ * без альфа-канала, и файлы намеренно не изменяются.
+ */
 export const TEXTURES = {
   PEPPER: 'pepper',
+  SCOUT: 'scout',
+  COURIER: 'courier',
+  WORKER: 'worker',
+  WORKER_DISPLAY: 'worker-display',
+  MERCHANT: 'merchant',
+  SCIENTIST: 'scientist',
+  ENGINEER: 'engineer',
+  GUARD: 'guard',
+  GUARD_DISPLAY: 'guard-display',
 };
 
 /** Порядок отрисовки: больше число — ближе к игроку. */

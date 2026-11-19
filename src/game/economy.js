@@ -1,26 +1,20 @@
 /**
  * Экономика игры: крошки, купленные голуби, пассивный доход и сохранение.
  *
- * Модуль не зависит от Phaser — его можно проверить отдельно и использовать
- * из любой сцены. Все числа целые, чтобы не копить ошибки округления.
+ * Модуль не зависит от Phaser. Все числа целые, доход всегда пересчитывается
+ * из фактически купленных голубей, а не берётся из сохранения.
  */
 
+import { PIGEON_CATALOG, SHOP_ITEMS, getPigeon } from './pigeons.js';
+
+/** Ключ сохранения не меняем: старый прогресс игрока должен подхватиться. */
 export const SAVE_KEY = 'pigeon-empire.save.v1';
+export const SAVE_VERSION = 2;
 
 /** Страховка от случайно испорченного/огромного значения в сохранении. */
 const MAX_CRUMBS = 1_000_000_000_000;
 
-/** Товары магазина. Пока один, но структура готова к расширению. */
-export const SHOP_ITEMS = [
-  {
-    id: 'scout',
-    name: 'Голубь-разведчик',
-    description: '+1 крошка/сек · пассивно',
-    price: 25,
-    income: 1,
-    max: 1,
-  },
-];
+export { SHOP_ITEMS };
 
 /** Хранилище по умолчанию: LocalStorage, а если он недоступен — память процесса. */
 function resolveStorage(storage) {
@@ -45,8 +39,8 @@ function safeInteger(value, min, max) {
 
 function emptyState() {
   const pigeons = {};
-  SHOP_ITEMS.forEach((item) => {
-    pigeons[item.id] = 0;
+  PIGEON_CATALOG.forEach((pigeon) => {
+    pigeons[pigeon.id] = 0;
   });
   return { crumbs: 0, pigeons };
 }
@@ -59,8 +53,13 @@ function sanitize(raw) {
   state.crumbs = safeInteger(raw.crumbs, 0, MAX_CRUMBS);
 
   const savedPigeons = raw.pigeons && typeof raw.pigeons === 'object' ? raw.pigeons : {};
-  SHOP_ITEMS.forEach((item) => {
-    state.pigeons[item.id] = safeInteger(savedPigeons[item.id], 0, item.max);
+  PIGEON_CATALOG.forEach((pigeon) => {
+    let saved = savedPigeons[pigeon.id];
+
+    // Миграция очень старых сохранений, где scout мог лежать отдельным полем.
+    if (pigeon.id === 'scout' && saved === undefined) saved = raw.scout;
+
+    state.pigeons[pigeon.id] = safeInteger(saved, 0, pigeon.max);
   });
 
   // `income` в сохранении только для информации: доход всегда пересчитываем
@@ -117,30 +116,34 @@ export class Economy {
   }
 
   canBuy(id) {
-    const item = SHOP_ITEMS.find((entry) => entry.id === id);
-    if (!item) return false;
-    return this.getPurchased(id) < item.max && this.crumbs >= item.price;
+    const pigeon = getPigeon(id);
+    if (!pigeon) return false;
+    return this.getPurchased(id) < pigeon.max && this.crumbs >= pigeon.price;
   }
 
+  /**
+   * Покупка одного голубя. Вызов синхронный: даже двойной клик не спишет
+   * две цены, потому что второй вызов увидит уже купленного голубя.
+   */
   buy(id) {
-    const item = SHOP_ITEMS.find((entry) => entry.id === id);
-    if (!item) return { ok: false, reason: 'unknown' };
-    if (this.getPurchased(id) >= item.max) return { ok: false, reason: 'maxed' };
-    if (this.crumbs < item.price) {
-      return { ok: false, reason: 'insufficient', missing: item.price - this.crumbs };
+    const pigeon = getPigeon(id);
+    if (!pigeon) return { ok: false, reason: 'unknown' };
+    if (this.getPurchased(id) >= pigeon.max) return { ok: false, reason: 'maxed' };
+    if (this.crumbs < pigeon.price) {
+      return { ok: false, reason: 'insufficient', missing: pigeon.price - this.crumbs };
     }
 
-    this.crumbs -= item.price;
+    this.crumbs -= pigeon.price;
     this.pigeons[id] = this.getPurchased(id) + 1;
     this.income = this._calculateIncome();
     this._commit();
 
-    return { ok: true, item };
+    return { ok: true, pigeon };
   }
 
   _calculateIncome() {
-    return SHOP_ITEMS.reduce(
-      (total, item) => total + this.getPurchased(item.id) * item.income,
+    return PIGEON_CATALOG.reduce(
+      (total, pigeon) => total + this.getPurchased(pigeon.id) * pigeon.income,
       0,
     );
   }
@@ -156,6 +159,7 @@ export class Economy {
       this.storage.setItem(
         SAVE_KEY,
         JSON.stringify({
+          version: SAVE_VERSION,
           crumbs: this.crumbs,
           pigeons: this.pigeons,
           income: this.income,
