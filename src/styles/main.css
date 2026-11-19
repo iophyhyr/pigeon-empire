@@ -1,0 +1,26 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #1b1430;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#game {
+  width: 100%;
+  height: 100%;
+}
+
+#game canvas {
+  display: block;
+  /* Отдаём жесты (тапы, свайпы) игре, а не скроллу/зуму страницы. */
+  touch-action: none;
+}

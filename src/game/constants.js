@@ -1,0 +1,34 @@
+/**
+ * Общие константы игры: ключи сцен, базовое разрешение, слои отрисовки.
+ * Держим их в одном месте, чтобы не дублировать строки/числа по коду.
+ */
+
+export const GAME_WIDTH = 1280;
+export const GAME_HEIGHT = 720;
+
+/** Уровень земли (верхняя кромка крыши) в координатах игрового поля. */
+export const ROOF_TOP = 508;
+
+export const SCENE_KEYS = {
+  BOOT: 'BootScene',
+  PRELOAD: 'PreloadScene',
+  GAME: 'GameScene',
+};
+
+/** Ключи текстур в кэше Phaser (сами файлы грузятся в PreloadScene). */
+export const TEXTURES = {
+  PEPPER: 'pepper',
+};
+
+/** Порядок отрисовки: больше число — ближе к игроку. */
+export const DEPTH = {
+  SKY: 0,
+  CLOUD: 5,
+  SKYLINE: 10,
+  ROOF: 20,
+  SHADOW: 25,
+  PIGEON: 30,
+  FLOATING: 40,
+  UI: 100,
+  TOAST: 110,
+};
