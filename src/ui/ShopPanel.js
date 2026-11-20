@@ -10,9 +10,11 @@ const PANEL = { x: 220, y: 176, width: 840, height: 528 };
 const LIST = { x: 28, y: 116, width: 784, height: 344 };
 
 const CARD = { x: 12, width: 760, height: 70, step: 78 };
+/** Карточки улучшений выше: в них отдельные строки уровня, цены и нехватки. */
+const UPGRADE_CARD = { height: 92, step: 100 };
 const CONTENT_HEIGHT = {
   pigeons: PIGEON_CATALOG.length * CARD.step,
-  upgrades: UPGRADE_CATALOG.length * CARD.step,
+  upgrades: UPGRADE_CATALOG.length * UPGRADE_CARD.step,
 };
 
 const TAB = { y: 70, width: 180, height: 38 };
@@ -26,6 +28,8 @@ const STATUS_UPGRADES = 'Улучшения применяются сразу п
 const COLOR_ERROR = '#b4482f';
 const COLOR_SUCCESS = '#2d7d46';
 const COLOR_UNAFFORDABLE = '#7a5b2a';
+/** Приглушённый, но читаемый на светлом фоне (вместо почти белого CSS.muted). */
+const COLOR_SECONDARY = '#58708f';
 
 /**
  * Окно магазина на примитивах Phaser.
@@ -87,10 +91,11 @@ export class ShopPanel {
       });
 
     this.subtitle = scene.add
-      .text(470, 80, TABS[0].subtitle, {
+      .text(470, 78, TABS[0].subtitle, {
         fontFamily: CSS.fontFamily,
-        fontSize: '18px',
-        color: CSS.muted,
+        fontSize: '19px',
+        fontStyle: 'bold',
+        color: COLOR_SECONDARY,
       });
 
     this.closeButton = createButton(scene, {
@@ -266,12 +271,12 @@ export class ShopPanel {
     this.scrollbar = scene.add.graphics();
   }
 
-  _buildCardBackground(index) {
+  _buildCardBackground(index, height = CARD.height) {
     const bg = this.scene.add.graphics();
     bg.fillStyle(index % 2 === 0 ? 0xeaf3ff : 0xf6faff, 1);
-    bg.fillRoundedRect(0, 0, CARD.width, CARD.height, 18);
+    bg.fillRoundedRect(0, 0, CARD.width, height, 18);
     bg.lineStyle(3, COLORS.accent, 0.75);
-    bg.strokeRoundedRect(0, 0, CARD.width, CARD.height, 18);
+    bg.strokeRoundedRect(0, 0, CARD.width, height, 18);
     return bg;
   }
 
@@ -341,18 +346,24 @@ export class ShopPanel {
 
   _buildUpgradeCard(upgrade, index) {
     const scene = this.scene;
-    const card = scene.add.container(LIST.x + CARD.x, index * CARD.step);
+    const height = UPGRADE_CARD.height;
+    const card = scene.add.container(LIST.x + CARD.x, index * UPGRADE_CARD.step);
 
-    const bg = this._buildCardBackground(index);
+    const bg = this._buildCardBackground(index, height);
+
+    // Тонкая полоска отделяет название с описанием от уровня и цены.
+    const divider = scene.add.graphics();
+    divider.lineStyle(3, COLORS.accent, 0.35);
+    divider.lineBetween(352, 12, 352, height - 12);
 
     const badge = scene.add.graphics();
     badge.fillStyle(COLORS.accent, 1);
-    badge.fillCircle(44, CARD.height / 2, 22);
+    badge.fillCircle(44, height / 2, 22);
     badge.lineStyle(3, COLORS.accentDark, 1);
-    badge.strokeCircle(44, CARD.height / 2, 22);
+    badge.strokeCircle(44, height / 2, 22);
 
     const badgeText = scene.add
-      .text(44, CARD.height / 2, upgrade.kind === 'click' ? '+' : '↗', {
+      .text(44, height / 2, upgrade.kind === 'click' ? '+' : '↗', {
         fontFamily: CSS.fontFamily,
         fontSize: '26px',
         fontStyle: 'bold',
@@ -366,45 +377,66 @@ export class ShopPanel {
         fontSize: '22px',
         fontStyle: 'bold',
         color: CSS.ink,
+        wordWrap: { width: 262 },
       });
 
     const description = scene.add
       .text(84, 38, upgrade.description, {
         fontFamily: CSS.fontFamily,
-        fontSize: '16px',
-        color: CSS.muted,
+        fontSize: '15px',
+        color: COLOR_SECONDARY,
+        wordWrap: { width: 262 },
       });
 
     const level = scene.add
-      .text(400, 8, '', {
+      .text(368, 10, '', {
         fontFamily: CSS.fontFamily,
-        fontSize: '18px',
+        fontSize: '17px',
         fontStyle: 'bold',
         color: CSS.ink,
+        wordWrap: { width: 264 },
       });
 
     const price = scene.add
-      .text(400, 40, '', {
+      .text(368, 36, '', {
         fontFamily: CSS.fontFamily,
         fontSize: '16px',
         fontStyle: 'bold',
         color: CSS.ink,
-        wordWrap: { width: 240 },
+        wordWrap: { width: 264 },
+      });
+
+    // Отдельная строка, чтобы «не хватает N» не теснило цену.
+    const missing = scene.add
+      .text(368, 62, '', {
+        fontFamily: CSS.fontFamily,
+        fontSize: '15px',
+        color: COLOR_UNAFFORDABLE,
+        wordWrap: { width: 264 },
       });
 
     const buyButton = createButton(scene, {
-      x: 650,
-      y: 13,
-      width: 98,
+      x: 652,
+      y: 24,
+      width: 96,
       height: 44,
       label: 'КУПИТЬ',
       fontSize: 18,
       onClick: () => this._handleBuyUpgrade(upgrade.id),
     });
 
-    card.add([bg, badge, badgeText, name, description, level, price, buyButton]);
+    card.add([bg, divider, badge, badgeText, name, description, level, price, missing, buyButton]);
 
-    return { id: upgrade.id, definition: upgrade, container: card, level, price, buyButton };
+    return {
+      id: upgrade.id,
+      definition: upgrade,
+      container: card,
+      height,
+      level,
+      price,
+      missing,
+      buyButton,
+    };
   }
 
   open() {
@@ -496,13 +528,15 @@ export class ShopPanel {
         );
         card.price.setText(status.maxLevel === 1 ? 'Одноразовое улучшение' : 'Максимальный уровень');
         card.price.setColor(COLOR_SUCCESS);
+        card.missing.setText('');
         card.buyButton.setLabel(status.maxLevel === 1 ? 'КУПЛЕНО' : 'МАКС.');
       } else {
         card.level.setText(`Уровень ${status.level} / ${status.maxLevel}`);
-        card.price.setText(
-          `${status.price} крошек${status.missing > 0 ? ` · не хватает ${formatAmount(status.missing)}` : ''}`,
-        );
+        card.price.setText(`${status.price} крошек`);
         card.price.setColor(status.affordable ? CSS.ink : COLOR_UNAFFORDABLE);
+        card.missing.setText(
+          status.missing > 0 ? `не хватает ${formatAmount(status.missing)}` : '',
+        );
         card.buyButton.setLabel('КУПИТЬ');
       }
     });
@@ -599,7 +633,8 @@ export class ShopPanel {
   _updateButtonInputs() {
     this.cards.forEach((card) => {
       const top = card.container.y;
-      const visible = top + CARD.height > this.scrollY && top < this.scrollY + LIST.height;
+      const height = card.height || CARD.height;
+      const visible = top + height > this.scrollY && top < this.scrollY + LIST.height;
       let enabled = this.isOpen && visible;
 
       if (this.tab === 'upgrades') {
