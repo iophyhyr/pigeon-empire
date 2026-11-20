@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 
-import { SCENE_KEYS, GAME_WIDTH, DEPTH } from '../game/constants.js';
+import { SCENE_KEYS, DEPTH } from '../game/constants.js';
 import { COLORS, CSS } from '../game/palette.js';
 import { Economy } from '../game/economy.js';
 import { buildBackdrop } from '../world/Backdrop.js';
@@ -9,7 +9,6 @@ import { PigeonFlock } from '../objects/PigeonFlock.js';
 import { Hud } from '../ui/Hud.js';
 import { ShopPanel } from '../ui/ShopPanel.js';
 
-const PEPPER_X = GAME_WIDTH / 2;
 const PEPPER_Y = 470;
 
 /**
@@ -32,18 +31,23 @@ export class GameScene extends Phaser.Scene {
 
     buildBackdrop(this);
 
+    const pepperX = this.scale.width / 2;
+
     // тень на крыше — отдельно от персонажа, чтобы не подпрыгивала вместе с ним
-    this.add
+    this._pepperShadow = this.add
       .graphics()
       .setDepth(DEPTH.SHADOW)
+      .setPosition(pepperX, PEPPER_Y + 104)
       .fillStyle(COLORS.shadow, 0.18)
-      .fillEllipse(PEPPER_X, PEPPER_Y + 104, 190, 36);
+      .fillEllipse(0, 0, 190, 36);
 
-    this.pepper = new Pepper(this, PEPPER_X, PEPPER_Y, () => this.collectCrumb());
+    this.pepper = new Pepper(this, pepperX, PEPPER_Y, () => this.collectCrumb());
 
     this.hud = new Hud(this, { onShop: () => this.shop.open() });
     this.shop = new ShopPanel(this, this.economy);
-    this.flock = new PigeonFlock(this, this.economy);
+    this.flock = new PigeonFlock(this, this.economy, this.pepper);
+
+    this.scale.on('resize', this._handleResize, this);
 
     this._unsubscribers.push(
       this.economy.onChange((state) => {
@@ -60,6 +64,19 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.events.once('shutdown', () => this._cleanup());
+  }
+
+  /**
+   * FIT-масштаб сохраняет игровые координаты, но при изменении окна всё равно
+   * пересчитываем центр и расстановку: так композиция не «залипает» в старых местах.
+   */
+  _handleResize(gameSize) {
+    const width = gameSize ? gameSize.width : this.scale.width;
+    const pepperX = width / 2;
+
+    if (this.pepper) this.pepper.setPosition(pepperX, PEPPER_Y);
+    if (this._pepperShadow) this._pepperShadow.setPosition(pepperX, PEPPER_Y + 104);
+    if (this.flock) this.flock.layout();
   }
 
   /** Клик по Pepper: +1 крошка, пульс счётчика и всплывающий «+1». */
@@ -98,6 +115,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   _cleanup() {
+    this.scale.off('resize', this._handleResize, this);
     this._unsubscribers.forEach((unsubscribe) => unsubscribe());
     this._unsubscribers = [];
     if (this.incomeTimer) this.incomeTimer.remove();

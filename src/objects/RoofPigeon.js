@@ -4,7 +4,10 @@ import { DEPTH, TEXTURES } from '../game/constants.js';
 import { COLORS } from '../game/palette.js';
 
 /** Куда «встают» лапы в локальных координатах контейнера (как у Pepper). */
-const FEET_OFFSET = 101;
+export const FEET_OFFSET = 101;
+
+/** Общий для всех покупных голубей период «дыхания», чтобы не было хаоса. */
+const IDLE_DURATION = 1800;
 
 /**
  * Универсальный голубь на крыше.
@@ -36,27 +39,50 @@ export class RoofPigeon extends Phaser.GameObjects.Container {
     this._popIn();
   }
 
+  /** Размер спрайта без учёта временной анимации — нужен для расстановки. */
+  getFootprint() {
+    return {
+      halfWidth: (this.image.width * this._baseScale) / 2,
+      height: this.image.height * this._baseScale,
+    };
+  }
+
+  /**
+   * Перестановка голубя при покупке/изменении размера окна.
+   * Тень — отдельный объект, поэтому её позицию тоже обновляем.
+   */
+  setRoofPosition(x, y) {
+    this.setPosition(x, y);
+    this._baseY = y;
+    if (this.shadow) this.shadow.setPosition(x, y);
+  }
+
   _buildShadow() {
     const width = Math.max(60, this.image.displayWidth * 0.72);
 
     this.shadow = this.scene.add
       .graphics()
       .setDepth(DEPTH.SHADOW)
+      .setPosition(this.x, this.y)
       .fillStyle(COLORS.shadow, 0.16)
-      .fillEllipse(this.x, this.y + FEET_OFFSET + 3, width, 22);
+      .fillEllipse(0, FEET_OFFSET + 3, width, 22);
   }
 
-  /** Мягкое «дыхание»: смещение по высоте и равномерное изменение масштаба. */
+  /**
+   * Мягкое «дыхание»: все покупные голуби дышат синхронно и очень локально,
+   * поэтому соседи не сталкиваются во время анимации.
+   */
   _startIdle() {
-    const breathScale = this._baseScale * 1.02;
-    const duration = 1650 + (this.definition.income % 5) * 90;
+    const breathScale = this._baseScale * 1.015;
+    const delay = (IDLE_DURATION - (this.scene.time.now % IDLE_DURATION)) % IDLE_DURATION;
 
     this._idleTween = this.scene.tweens.add({
       targets: this.image,
-      y: FEET_OFFSET - 5,
+      y: FEET_OFFSET - 4,
       scaleX: breathScale,
       scaleY: breathScale,
-      duration,
+      delay,
+      duration: IDLE_DURATION,
       ease: 'Sine.easeInOut',
       yoyo: true,
       repeat: -1,

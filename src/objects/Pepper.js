@@ -50,6 +50,18 @@ export class Pepper extends Phaser.GameObjects.Container {
   }
 
   /**
+   * Габарит спрайта для расстановки остальных голубей. Берём полный PNG,
+   * а не только видимую область: так зазор сохраняется даже между прозрачными
+   * полями, и проверка по getBounds() тоже не находит наложений.
+   */
+  getFootprint() {
+    return {
+      halfWidth: (this.image.width * this._baseScale) / 2,
+      height: this.image.height * this._baseScale,
+    };
+  }
+
+  /**
    * Хитбокс — прямоугольник по видимой части спрайта, а не по всему PNG
    * (у файла есть прозрачные поля). Такой размер удобен и мышью, и пальцем.
    */
