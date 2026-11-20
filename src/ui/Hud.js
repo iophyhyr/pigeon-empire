@@ -1,9 +1,11 @@
 import { GAME_WIDTH, DEPTH } from '../game/constants.js';
 import { COLORS, CSS } from '../game/palette.js';
+import { formatAmount } from '../game/format.js';
 import { createButton } from './createButton.js';
 
 const CRUMBS_PILL = { x: 40, y: 96, width: 300, height: 72 };
 const INCOME_PILL = { x: 360, y: 96, width: 200, height: 72 };
+const CLICK_PILL = { x: 580, y: 96, width: 240, height: 72 };
 const SHOP_BUTTON = { x: 1040, y: 96, width: 200, height: 72 };
 
 /**
@@ -17,11 +19,13 @@ export class Hud {
     this.onShop = options.onShop || null;
     this.crumbs = 0;
     this.income = 0;
+    this.clickPower = 1;
     this.toast = null;
 
     this._buildTitle();
     this._buildCrumbs();
     this._buildIncome();
+    this._buildClickPower();
     this._buildShopButton();
   }
 
@@ -105,6 +109,37 @@ export class Hud {
     container.add([bg, icon, this.incomeText]);
   }
 
+  /** Небольшая плашка силы клика рядом с крошками и доходом. */
+  _buildClickPower() {
+    const { x, y, width, height } = CLICK_PILL;
+    const container = this.scene.add.container(x, y).setDepth(DEPTH.UI);
+
+    const bg = this.scene.add.graphics();
+    bg.fillStyle(COLORS.hudPanelLight, 0.82);
+    bg.fillRoundedRect(0, 0, width, height, height / 2);
+    bg.lineStyle(3, COLORS.accent, 0.75);
+    bg.strokeRoundedRect(0, 0, width, height, height / 2);
+
+    // пиктограмма «удар»: небольшой хлебный брусок
+    const icon = this.scene.add.graphics();
+    icon.fillStyle(COLORS.crumb, 1);
+    icon.fillRoundedRect(24, 26, 32, 22, 8);
+    icon.fillStyle(COLORS.crumbDark, 0.5);
+    icon.fillCircle(34, 34, 2.5);
+    icon.fillCircle(47, 40, 2);
+
+    this.clickText = this.scene.add
+      .text(72, height / 2, '+1 за клик', {
+        fontFamily: CSS.fontFamily,
+        fontSize: '24px',
+        fontStyle: 'bold',
+        color: CSS.white,
+      })
+      .setOrigin(0, 0.5);
+
+    container.add([bg, icon, this.clickText]);
+  }
+
   _buildShopButton() {
     const { x, y, width, height } = SHOP_BUTTON;
     this.shopButton = createButton(this.scene, {
@@ -123,12 +158,17 @@ export class Hud {
 
   setCrumbs(value) {
     this.crumbs = value;
-    this.crumbsText.setText(formatNumber(value));
+    this.crumbsText.setText(formatAmount(value));
   }
 
   setIncome(value) {
     this.income = value;
-    this.incomeText.setText(`${formatNumber(value)}/сек`);
+    this.incomeText.setText(`${formatAmount(value)}/сек`);
+  }
+
+  setClickPower(value) {
+    this.clickPower = value;
+    this.clickText.setText(`+${formatAmount(value)} за клик`);
   }
 
   /** Короткий «прыжок» плашки при получении крошки. */
@@ -193,8 +233,4 @@ export class Hud {
       ease: 'Quad.easeIn',
     });
   }
-}
-
-function formatNumber(value) {
-  return value.toLocaleString('ru-RU');
 }

@@ -1,32 +1,45 @@
 import { GAME_WIDTH, GAME_HEIGHT, DEPTH } from '../game/constants.js';
 import { COLORS, CSS } from '../game/palette.js';
+import { formatAmount } from '../game/format.js';
 import { PIGEON_CATALOG, getPigeon } from '../game/pigeons.js';
+import { UPGRADE_CATALOG } from '../game/upgrades.js';
 import { createButton } from './createButton.js';
 
 /** Окно расположено ниже HUD: верхние плашки остаются видимыми. */
 const PANEL = { x: 220, y: 176, width: 840, height: 528 };
-const LIST = { x: 28, y: 104, width: 784, height: 356 };
+const LIST = { x: 28, y: 116, width: 784, height: 344 };
 
 const CARD = { x: 12, width: 760, height: 70, step: 78 };
-const CONTENT_HEIGHT = PIGEON_CATALOG.length * CARD.step;
+const CONTENT_HEIGHT = {
+  pigeons: PIGEON_CATALOG.length * CARD.step,
+  upgrades: UPGRADE_CATALOG.length * CARD.step,
+};
 
-const STATUS_DEFAULT = 'Клик по Pepper — +1 крошка. Покупай голубей и получай доход пассивно.';
+const TAB = { y: 70, width: 180, height: 38 };
+const TABS = [
+  { id: 'pigeons', label: 'ГОЛУБИ', x: 32, subtitle: 'Голубятня · первая коллекция' },
+  { id: 'upgrades', label: 'УЛУЧШЕНИЯ', x: 232, subtitle: 'Клик и пассивный доход' },
+];
+
+const STATUS_PIGEONS = 'Клик по Pepper — крошки. Покупай голубей и получай доход пассивно.';
+const STATUS_UPGRADES = 'Улучшения применяются сразу после покупки и сохраняются автоматически.';
 const COLOR_ERROR = '#b4482f';
 const COLOR_SUCCESS = '#2d7d46';
 const COLOR_UNAFFORDABLE = '#7a5b2a';
 
 /**
  * Окно магазина на примитивах Phaser.
- * Показывает всю коллекцию голубей с прокруткой внутри списка.
+ * Две вкладки: голуби и улучшения. У обеих — общая прокрутка внутри списка.
  */
 export class ShopPanel {
   constructor(scene, economy) {
     this.scene = scene;
     this.economy = economy;
     this.isOpen = false;
+    this.tab = 'pigeons';
     this.scrollY = 0;
-    this.maxScroll = Math.max(0, CONTENT_HEIGHT - LIST.height);
-    this.cards = [];
+    this.maxScroll = Math.max(0, CONTENT_HEIGHT.pigeons - LIST.height);
+    this.cardsByTab = { pigeons: [], upgrades: [] };
     this._dragging = false;
     this._dragY = 0;
 
@@ -37,6 +50,10 @@ export class ShopPanel {
     });
 
     this.refresh();
+  }
+
+  get cards() {
+    return this.cardsByTab[this.tab];
   }
 
   _build() {
@@ -69,10 +86,10 @@ export class ShopPanel {
         color: CSS.ink,
       });
 
-    const subtitle = scene.add
-      .text(34, 70, 'Голубятня · первая коллекция', {
+    this.subtitle = scene.add
+      .text(470, 80, TABS[0].subtitle, {
         fontFamily: CSS.fontFamily,
-        fontSize: '20px',
+        fontSize: '18px',
         color: CSS.muted,
       });
 
@@ -86,10 +103,11 @@ export class ShopPanel {
       onClick: () => this.close(),
     });
 
-    this._buildList();
+    this._buildTabs();
+    this._buildLists();
 
     this.statusText = scene.add
-      .text(32, 470, STATUS_DEFAULT, {
+      .text(32, 470, STATUS_PIGEONS, {
         fontFamily: CSS.fontFamily,
         fontSize: '20px',
         color: CSS.ink,
@@ -107,7 +125,8 @@ export class ShopPanel {
       shadow,
       bg,
       this.listHit,
-      this.listContainer,
+      this.pigeonList,
+      this.upgradeList,
       this.topCover,
       this.bottomCover,
       this.frame,
@@ -115,7 +134,8 @@ export class ShopPanel {
       this.statusText,
       this.footerText,
       title,
-      subtitle,
+      this.subtitle,
+      ...Object.values(this.tabButtons).map((tab) => tab.container),
       this.closeButton,
     ]);
 
@@ -123,7 +143,9 @@ export class ShopPanel {
       this.dim,
       this.closeButton.hit,
       this.listHit,
-      ...this.cards.map((card) => card.buyButton.hit),
+      ...Object.values(this.tabButtons).map((tab) => tab.hit),
+      ...PIGEON_CATALOG.map((pigeon) => this.cardsByTab.pigeons.find((c) => c.id === pigeon.id).buyButton.hit),
+      ...UPGRADE_CATALOG.map((upgrade) => this.cardsByTab.upgrades.find((c) => c.id === upgrade.id).buyButton.hit),
     ];
 
     this._onWheel = (pointer, _objects, _deltaX, deltaY) => {
@@ -134,11 +156,51 @@ export class ShopPanel {
 
     this._onEsc = () => this.close();
 
+    this._paintTabs();
     this._applyScroll();
     this.setVisible(false);
   }
 
-  _buildList() {
+  _buildTabs() {
+    const scene = this.scene;
+    this.tabButtons = {};
+
+    TABS.forEach((config) => {
+      const container = scene.add.container(config.x, TAB.y);
+
+      const bg = scene.add.graphics();
+      const text = scene.add
+        .text(TAB.width / 2, TAB.height / 2, config.label, {
+          fontFamily: CSS.fontFamily,
+          fontSize: '20px',
+          fontStyle: 'bold',
+          color: CSS.ink,
+        })
+        .setOrigin(0.5);
+
+      const hit = scene.add
+        .rectangle(TAB.width / 2, TAB.height / 2, TAB.width, TAB.height, 0xffffff, 0)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerup', () => this._setTab(config.id));
+
+      container.add([bg, text, hit]);
+      this.tabButtons[config.id] = { container, bg, text, hit, config };
+    });
+  }
+
+  _paintTabs() {
+    Object.values(this.tabButtons).forEach(({ bg, text, config }) => {
+      const active = config.id === this.tab;
+      bg.clear();
+      bg.fillStyle(active ? COLORS.accent : 0xeaf3ff, 1);
+      bg.fillRoundedRect(0, 0, TAB.width, TAB.height, 14);
+      bg.lineStyle(3, COLORS.accentDark, active ? 1 : 0.4);
+      bg.strokeRoundedRect(0, 0, TAB.width, TAB.height, 14);
+      text.setColor(active ? CSS.ink : '#58708f');
+    });
+  }
+
+  _buildLists() {
     const scene = this.scene;
 
     this.listHit = scene.add
@@ -163,13 +225,22 @@ export class ShopPanel {
     this.listHit.on('pointerup', stopDrag);
     this.listHit.on('pointerout', stopDrag);
 
-    this.listContainer = scene.add.container(0, 0);
+    this.pigeonList = scene.add.container(0, 0);
+    this.upgradeList = scene.add.container(0, 0);
 
     PIGEON_CATALOG.forEach((pigeon, index) => {
-      const card = this._buildCard(pigeon, index);
-      this.cards.push(card);
-      this.listContainer.add(card.container);
+      const card = this._buildPigeonCard(pigeon, index);
+      this.cardsByTab.pigeons.push(card);
+      this.pigeonList.add(card.container);
     });
+
+    UPGRADE_CATALOG.forEach((upgrade, index) => {
+      const card = this._buildUpgradeCard(upgrade, index);
+      this.cardsByTab.upgrades.push(card);
+      this.upgradeList.add(card.container);
+    });
+
+    this.upgradeList.setVisible(false);
 
     // Phaser 4 в WebGL не поддерживает GeometryMask у контейнеров. Вместо маски
     // закрываем выходящие за список карточки непрозрачными «полками» окна.
@@ -195,15 +266,20 @@ export class ShopPanel {
     this.scrollbar = scene.add.graphics();
   }
 
-  _buildCard(pigeon, index) {
-    const scene = this.scene;
-    const card = scene.add.container(LIST.x + CARD.x, index * CARD.step);
-
-    const bg = scene.add.graphics();
+  _buildCardBackground(index) {
+    const bg = this.scene.add.graphics();
     bg.fillStyle(index % 2 === 0 ? 0xeaf3ff : 0xf6faff, 1);
     bg.fillRoundedRect(0, 0, CARD.width, CARD.height, 18);
     bg.lineStyle(3, COLORS.accent, 0.75);
     bg.strokeRoundedRect(0, 0, CARD.width, CARD.height, 18);
+    return bg;
+  }
+
+  _buildPigeonCard(pigeon, index) {
+    const scene = this.scene;
+    const card = scene.add.container(LIST.x + CARD.x, index * CARD.step);
+
+    const bg = this._buildCardBackground(index);
 
     const thumb = scene.add
       .image(44, CARD.height / 2, pigeon.texture)
@@ -263,12 +339,80 @@ export class ShopPanel {
     return { id: pigeon.id, pigeon, container: card, price, owned, buyButton };
   }
 
+  _buildUpgradeCard(upgrade, index) {
+    const scene = this.scene;
+    const card = scene.add.container(LIST.x + CARD.x, index * CARD.step);
+
+    const bg = this._buildCardBackground(index);
+
+    const badge = scene.add.graphics();
+    badge.fillStyle(COLORS.accent, 1);
+    badge.fillCircle(44, CARD.height / 2, 22);
+    badge.lineStyle(3, COLORS.accentDark, 1);
+    badge.strokeCircle(44, CARD.height / 2, 22);
+
+    const badgeText = scene.add
+      .text(44, CARD.height / 2, upgrade.kind === 'click' ? '+' : '↗', {
+        fontFamily: CSS.fontFamily,
+        fontSize: '26px',
+        fontStyle: 'bold',
+        color: CSS.ink,
+      })
+      .setOrigin(0.5);
+
+    const name = scene.add
+      .text(84, 8, upgrade.name, {
+        fontFamily: CSS.fontFamily,
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: CSS.ink,
+      });
+
+    const description = scene.add
+      .text(84, 38, upgrade.description, {
+        fontFamily: CSS.fontFamily,
+        fontSize: '16px',
+        color: CSS.muted,
+      });
+
+    const level = scene.add
+      .text(400, 8, '', {
+        fontFamily: CSS.fontFamily,
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: CSS.ink,
+      });
+
+    const price = scene.add
+      .text(400, 40, '', {
+        fontFamily: CSS.fontFamily,
+        fontSize: '16px',
+        fontStyle: 'bold',
+        color: CSS.ink,
+        wordWrap: { width: 240 },
+      });
+
+    const buyButton = createButton(scene, {
+      x: 650,
+      y: 13,
+      width: 98,
+      height: 44,
+      label: 'КУПИТЬ',
+      fontSize: 18,
+      onClick: () => this._handleBuyUpgrade(upgrade.id),
+    });
+
+    card.add([bg, badge, badgeText, name, description, level, price, buyButton]);
+
+    return { id: upgrade.id, definition: upgrade, container: card, level, price, buyButton };
+  }
+
   open() {
     if (this.isOpen) return;
 
     this.isOpen = true;
     this.setVisible(true);
-    this._setStatus(STATUS_DEFAULT);
+    this._setStatus(this.tab === 'pigeons' ? STATUS_PIGEONS : STATUS_UPGRADES);
     this.refresh();
 
     const keyboard = this.scene.input.keyboard;
@@ -291,6 +435,23 @@ export class ShopPanel {
     else this.open();
   }
 
+  _setTab(id) {
+    if (!this.tabButtons[id] || this.tab === id) return;
+
+    this.tab = id;
+    this.scrollY = 0;
+    this.maxScroll = Math.max(0, CONTENT_HEIGHT[id] - LIST.height);
+
+    this.pigeonList.setVisible(id === 'pigeons');
+    this.upgradeList.setVisible(id === 'upgrades');
+    this.subtitle.setText(this.tabButtons[id].config.subtitle);
+
+    this._paintTabs();
+    this._setStatus(id === 'pigeons' ? STATUS_PIGEONS : STATUS_UPGRADES);
+    this._applyScroll();
+    this.refresh();
+  }
+
   setVisible(visible) {
     this.dim.setVisible(visible);
     this.panel.setVisible(visible);
@@ -298,7 +459,22 @@ export class ShopPanel {
   }
 
   refresh() {
-    this.cards.forEach((card) => {
+    this._refreshPigeonCards();
+    this._refreshUpgradeCards();
+
+    const income = formatAmount(this.economy.income);
+    this.footerText.setText(
+      this.tab === 'pigeons'
+        ? `Доход: ${income}/сек · колесо или перетаскивание — прокрутка · Esc — закрыть`
+        : `Клик: +${formatAmount(this.economy.clickPower)} · Доход: ${income}/сек · Esc — закрыть`,
+    );
+
+    this._paintTabs();
+    this._updateButtonInputs();
+  }
+
+  _refreshPigeonCards() {
+    this.cardsByTab.pigeons.forEach((card) => {
       const owned = this.economy.getPurchased(card.id) > 0;
       const affordable = this.economy.canBuy(card.id);
 
@@ -307,10 +483,29 @@ export class ShopPanel {
       card.price.setColor(owned ? COLOR_SUCCESS : affordable ? CSS.ink : COLOR_UNAFFORDABLE);
       card.buyButton.setLabel(owned ? 'КУПЛЕНО' : 'КУПИТЬ');
     });
+  }
 
-    this.footerText.setText(
-      `Доход: ${this.economy.income}/сек · колесо или перетаскивание — прокрутка · Esc — закрыть`,
-    );
+  _refreshUpgradeCards() {
+    this.cardsByTab.upgrades.forEach((card) => {
+      const status = this.economy.getUpgradeStatus(card.id);
+      if (!status) return;
+
+      if (status.done) {
+        card.level.setText(
+          status.maxLevel === 1 ? 'КУПЛЕНО' : `МАКС. ${status.maxLevel} / ${status.maxLevel}`,
+        );
+        card.price.setText(status.maxLevel === 1 ? 'Одноразовое улучшение' : 'Максимальный уровень');
+        card.price.setColor(COLOR_SUCCESS);
+        card.buyButton.setLabel(status.maxLevel === 1 ? 'КУПЛЕНО' : 'МАКС.');
+      } else {
+        card.level.setText(`Уровень ${status.level} / ${status.maxLevel}`);
+        card.price.setText(
+          `${status.price} крошек${status.missing > 0 ? ` · не хватает ${formatAmount(status.missing)}` : ''}`,
+        );
+        card.price.setColor(status.affordable ? CSS.ink : COLOR_UNAFFORDABLE);
+        card.buyButton.setLabel('КУПИТЬ');
+      }
+    });
   }
 
   _handleBuy(id) {
@@ -332,6 +527,26 @@ export class ShopPanel {
       );
     } else if (result.reason === 'maxed') {
       this._setStatus(`${label} уже куплен`, COLOR_ERROR);
+    }
+
+    this.refresh();
+  }
+
+  _handleBuyUpgrade(id) {
+    if (!this.isOpen) return;
+
+    const result = this.economy.buyUpgrade(id);
+    const label = result.upgrade ? result.upgrade.name : 'Улучшение';
+
+    if (result.ok) {
+      this._setStatus(`${label}: уровень ${result.level} куплен за ${result.price} крошек`, COLOR_SUCCESS);
+    } else if (result.reason === 'insufficient') {
+      this._setStatus(
+        `Недостаточно крошек: не хватает ${formatAmount(result.missing)}`,
+        COLOR_ERROR,
+      );
+    } else if (result.reason === 'maxed') {
+      this._setStatus(`${label}: максимальный уровень`, COLOR_ERROR);
     }
 
     this.refresh();
@@ -362,7 +577,8 @@ export class ShopPanel {
   }
 
   _applyScroll() {
-    this.listContainer.y = LIST.y - this.scrollY;
+    this.pigeonList.y = LIST.y - this.scrollY;
+    this.upgradeList.y = LIST.y - this.scrollY;
     this._updateButtonInputs();
 
     this.scrollbar.clear();
@@ -372,23 +588,26 @@ export class ShopPanel {
     if (this.maxScroll <= 0) return;
 
     const trackHeight = LIST.height - 12;
-    const thumbHeight = Math.max(36, (LIST.height / CONTENT_HEIGHT) * trackHeight);
-    const thumbY =
-      LIST.y +
-      6 +
-      (this.scrollY / this.maxScroll) * (trackHeight - thumbHeight);
+    const thumbHeight = Math.max(36, (LIST.height / CONTENT_HEIGHT[this.tab]) * trackHeight);
+    const thumbY = LIST.y + 6 + (this.scrollY / this.maxScroll) * (trackHeight - thumbHeight);
 
     this.scrollbar.fillStyle(COLORS.accentDark, 0.9);
     this.scrollbar.fillRoundedRect(LIST.x + LIST.width - 10, thumbY, 6, thumbHeight, 3);
   }
 
-  /** Заглушка списка не должна ловить клики по невидимым кнопкам. */
+  /** Невидимые карточки и недоступные покупки не должны ловить клики. */
   _updateButtonInputs() {
     this.cards.forEach((card) => {
       const top = card.container.y;
       const visible = top + CARD.height > this.scrollY && top < this.scrollY + LIST.height;
+      let enabled = this.isOpen && visible;
+
+      if (this.tab === 'upgrades') {
+        enabled = enabled && this.economy.canBuyUpgrade(card.id);
+      }
+
       if (card.buyButton.hit && card.buyButton.hit.input) {
-        card.buyButton.hit.input.enabled = this.isOpen && visible;
+        card.buyButton.hit.input.enabled = enabled;
       }
     });
   }

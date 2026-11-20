@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import { SCENE_KEYS, DEPTH } from '../game/constants.js';
 import { COLORS, CSS } from '../game/palette.js';
 import { Economy } from '../game/economy.js';
+import { formatAmount } from '../game/format.js';
 import { buildBackdrop } from '../world/Backdrop.js';
 import { Pepper } from '../objects/Pepper.js';
 import { PigeonFlock } from '../objects/PigeonFlock.js';
@@ -53,6 +54,7 @@ export class GameScene extends Phaser.Scene {
       this.economy.onChange((state) => {
         this.hud.setCrumbs(state.crumbs);
         this.hud.setIncome(state.income);
+        this.hud.setClickPower(state.clickPower);
       }),
     );
 
@@ -80,10 +82,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Клик по Pepper: +1 крошка, пульс счётчика и всплывающий «+1». */
-  collectCrumb(amount = 1) {
-    this.economy.addClicks(amount);
+  collectCrumb() {
+    const gained = this.economy.addClicks();
+    if (gained <= 0) return;
+
     this.hud.pulseCrumbs();
-    this._spawnFloatingText(`+${amount}`);
+    this._spawnFloatingText(`+${formatAmount(gained)}`);
   }
 
   _spawnFloatingText(label) {
