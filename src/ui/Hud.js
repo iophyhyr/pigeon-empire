@@ -6,6 +6,7 @@ import { createButton } from './createButton.js';
 const CRUMBS_PILL = { x: 40, y: 96, width: 300, height: 72 };
 const INCOME_PILL = { x: 360, y: 96, width: 200, height: 72 };
 const CLICK_PILL = { x: 580, y: 96, width: 240, height: 72 };
+const ACHIEVEMENTS_BUTTON = { x: 840, y: 96, width: 180, height: 72 };
 const SHOP_BUTTON = { x: 1040, y: 96, width: 200, height: 72 };
 
 /**
@@ -17,6 +18,7 @@ export class Hud {
   constructor(scene, options = {}) {
     this.scene = scene;
     this.onShop = options.onShop || null;
+    this.onAchievements = options.onAchievements || null;
     this.crumbs = 0;
     this.income = 0;
     this.clickPower = 1;
@@ -26,6 +28,7 @@ export class Hud {
     this._buildCrumbs();
     this._buildIncome();
     this._buildClickPower();
+    this._buildAchievementsButton();
     this._buildShopButton();
   }
 
@@ -138,6 +141,24 @@ export class Hud {
       .setOrigin(0, 0.5);
 
     container.add([bg, icon, this.clickText]);
+  }
+
+  /** Отдельная кнопка достижений рядом с магазином. */
+  _buildAchievementsButton() {
+    const { x, y, width, height } = ACHIEVEMENTS_BUTTON;
+
+    this.achievementsButton = createButton(this.scene, {
+      x,
+      y,
+      width,
+      height,
+      label: 'ДОСТИЖЕНИЯ',
+      fontSize: 20,
+      onClick: () => {
+        if (this.onAchievements) this.onAchievements();
+        else this.showToast('Достижения скоро откроются');
+      },
+    });
   }
 
   _buildShopButton() {

@@ -9,6 +9,8 @@ import { Pepper } from '../objects/Pepper.js';
 import { PigeonFlock } from '../objects/PigeonFlock.js';
 import { Hud } from '../ui/Hud.js';
 import { ShopPanel } from '../ui/ShopPanel.js';
+import { AchievementsPanel } from '../ui/AchievementsPanel.js';
+import { AchievementToast } from '../ui/AchievementToast.js';
 
 const PEPPER_Y = 470;
 
@@ -44,8 +46,19 @@ export class GameScene extends Phaser.Scene {
 
     this.pepper = new Pepper(this, pepperX, PEPPER_Y, () => this.collectCrumb());
 
-    this.hud = new Hud(this, { onShop: () => this.shop.open() });
+    this.hud = new Hud(this, {
+      onShop: () => {
+        this.achievements.close();
+        this.shop.open();
+      },
+      onAchievements: () => {
+        this.shop.close();
+        this.achievements.open();
+      },
+    });
     this.shop = new ShopPanel(this, this.economy);
+    this.achievements = new AchievementsPanel(this, this.economy);
+    this.achievementToast = new AchievementToast(this);
     this.flock = new PigeonFlock(this, this.economy, this.pepper);
 
     this.scale.on('resize', this._handleResize, this);
@@ -56,6 +69,10 @@ export class GameScene extends Phaser.Scene {
         this.hud.setIncome(state.income);
         this.hud.setClickPower(state.clickPower);
       }),
+    );
+
+    this._unsubscribers.push(
+      this.economy.onAchievement((batch) => this.achievementToast.enqueue(batch)),
     );
 
     // Пассивный доход начисляется раз в секунду; при доходе 0 вызов ничего не меняет.
@@ -78,10 +95,12 @@ export class GameScene extends Phaser.Scene {
 
     if (this.pepper) this.pepper.setPosition(pepperX, PEPPER_Y);
     if (this._pepperShadow) this._pepperShadow.setPosition(pepperX, PEPPER_Y + 104);
+    if (this.shop) this.shop.handleResize();
+    if (this.achievements) this.achievements.handleResize();
     if (this.flock) this.flock.layout();
   }
 
-  /** Клик по Pepper: +1 крошка, пульс счётчика и всплывающий «+1». */
+  /** Клик по Pepper: крошки по силе клика, пульс счётчика и всплывающий «+N». */
   collectCrumb() {
     const gained = this.economy.addClicks();
     if (gained <= 0) return;
@@ -125,5 +144,7 @@ export class GameScene extends Phaser.Scene {
     if (this.incomeTimer) this.incomeTimer.remove();
     if (this.flock) this.flock.destroy();
     if (this.shop) this.shop.destroy();
+    if (this.achievements) this.achievements.destroy();
+    if (this.achievementToast) this.achievementToast.destroy();
   }
 }

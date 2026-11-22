@@ -46,8 +46,10 @@ export class ShopPanel {
     this.cardsByTab = { pigeons: [], upgrades: [] };
     this._dragging = false;
     this._dragY = 0;
+    this._listMask = null;
 
     this._build();
+    this._updateViewport();
 
     this._unsubscribe = this.economy.onChange(() => {
       if (this.isOpen) this.refresh();
@@ -130,10 +132,7 @@ export class ShopPanel {
       shadow,
       bg,
       this.listHit,
-      this.pigeonList,
-      this.upgradeList,
-      this.topCover,
-      this.bottomCover,
+      this.listViewport,
       this.frame,
       this.scrollbar,
       this.statusText,
@@ -230,8 +229,12 @@ export class ShopPanel {
     this.listHit.on('pointerup', stopDrag);
     this.listHit.on('pointerout', stopDrag);
 
+    // Оба списка живут в одном viewport: одна маска на обе вкладки, старая
+    // вкладка становится невидимой и не может оставить свои элементы в кадре.
+    this.listViewport = scene.add.container(0, 0);
     this.pigeonList = scene.add.container(0, 0);
     this.upgradeList = scene.add.container(0, 0);
+    this.listViewport.add([this.pigeonList, this.upgradeList]);
 
     PIGEON_CATALOG.forEach((pigeon, index) => {
       const card = this._buildPigeonCard(pigeon, index);
@@ -247,28 +250,60 @@ export class ShopPanel {
 
     this.upgradeList.setVisible(false);
 
-    // Phaser 4 в WebGL не поддерживает GeometryMask у контейнеров. Вместо маски
-    // закрываем выходящие за список карточки непрозрачными «полками» окна.
-    this.topCover = scene.add.graphics();
-    this.topCover.fillStyle(0xffffff, 1);
-    this.topCover.fillRoundedRect(0, 0, PANEL.width, LIST.y, 28);
+    // Phaser 4: GeometryMask работает только в Canvas, поэтому в WebGL список
+    // обрезается Mask filter. Graphics маски не добавляем в видимую часть окна.
+    this._setupListMask();
 
-    this.bottomCover = scene.add.graphics();
-    this.bottomCover.fillStyle(0xffffff, 1);
-    this.bottomCover.fillRoundedRect(
-      0,
-      LIST.y + LIST.height,
-      PANEL.width,
-      PANEL.height - LIST.y - LIST.height,
-      28,
-    );
-
-    // Рамку рисуем поверх «полок», чтобы окно оставалось цельным.
     this.frame = scene.add.graphics();
     this.frame.lineStyle(6, COLORS.accentDark, 1);
     this.frame.strokeRoundedRect(0, 0, PANEL.width, PANEL.height, 28);
 
     this.scrollbar = scene.add.graphics();
+  }
+
+  /** Маска общего viewport двух вкладок в мировых координатах. */
+  _setupListMask() {
+    const scene = this.scene;
+    const graphics = scene.add.graphics().setVisible(false);
+    let filter = null;
+    let geometryMask = null;
+
+    if (scene.renderer && scene.renderer.gl) {
+      this.listViewport.enableFilters();
+      filter = this.listViewport.filters.internal.addMask(
+        graphics,
+        false,
+        scene.cameras.main,
+        'world',
+      );
+      filter.autoUpdate = false;
+    } else {
+      geometryMask = this.listViewport.createGeometryMask(graphics);
+      this.listViewport.setMask(geometryMask);
+    }
+
+    this._listMask = { graphics, filter, geometryMask };
+  }
+
+  /** Пересчёт области прокрутки (вызывается при создании и resize). */
+  _updateViewport() {
+    if (!this._listMask) return;
+
+    const { graphics, filter } = this._listMask;
+    graphics.clear();
+    graphics.fillStyle(0xffffff, 1);
+    graphics.fillRect(PANEL.x + LIST.x, PANEL.y + LIST.y, LIST.width, LIST.height);
+
+    if (filter) filter.needsUpdate = true;
+
+    this.maxScroll = Math.max(0, CONTENT_HEIGHT[this.tab] - LIST.height);
+    this.scrollY = Math.min(this.maxScroll, Math.max(0, this.scrollY));
+    this._applyScroll();
+  }
+
+  /** Публичный вызов из GameScene при изменении размера окна. */
+  handleResize() {
+    this._updateViewport();
   }
 
   _buildCardBackground(index, height = CARD.height) {
@@ -443,6 +478,8 @@ export class ShopPanel {
     if (this.isOpen) return;
 
     this.isOpen = true;
+    this.scrollY = 0;
+    this.maxScroll = Math.max(0, CONTENT_HEIGHT[this.tab] - LIST.height);
     this.setVisible(true);
     this._setStatus(this.tab === 'pigeons' ? STATUS_PIGEONS : STATUS_UPGRADES);
     this.refresh();
@@ -654,6 +691,15 @@ export class ShopPanel {
     if (this._unsubscribe) {
       this._unsubscribe();
       this._unsubscribe = null;
+    }
+
+    if (this._listMask) {
+      const { graphics, filter, geometryMask } = this._listMask;
+      if (filter && this.listViewport.filters) this.listViewport.filters.internal.remove(filter);
+      if (geometryMask) this.listViewport.clearMask(false);
+      if (geometryMask) geometryMask.destroy();
+      graphics.destroy();
+      this._listMask = null;
     }
 
     this.dim.destroy();

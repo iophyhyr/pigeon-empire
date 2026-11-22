@@ -4,9 +4,16 @@
  *
  * Доход голубей и бонусы улучшений считаются раздельно; в сохранении лежит
  * только уровни, а не готовые эффекты. При загрузке всё пересчитывается заново.
+ * Здесь же учитываются все заработанные крошки и выдаются награды достижений.
  */
 
 import { PIGEON_CATALOG, SHOP_ITEMS, getPigeon } from './pigeons.js';
+import {
+  ACHIEVEMENT_CATALOG,
+  createAchievementState,
+  isAchievementMet,
+  buildAchievementStatuses,
+} from './achievements.js';
 import {
   UPGRADE_CATALOG,
   createUpgradeLevels,
@@ -20,8 +27,8 @@ import { formatAmount } from './format.js';
 /** Ключ сохранения не меняем: старый прогресс игрока должен подхватиться. */
 export const SAVE_KEY = 'pigeon-empire.save.v1';
 
-/** v3 добавил уровни улучшений; v2 и более старые safely мигрируют в нули. */
-export const SAVE_VERSION = 3;
+/** v4 добавил достижения и суммарно заработанные крошки; старые ключи мигрируют. */
+export const SAVE_VERSION = 4;
 
 /** Страховка от случайно испорченного/огромного значения в сохранении. */
 const MAX_CRUMBS = 1_000_000_000_000;
@@ -65,7 +72,13 @@ function emptyState() {
   PIGEON_CATALOG.forEach((pigeon) => {
     pigeons[pigeon.id] = 0;
   });
-  return { crumbs: 0, pigeons, upgrades: createUpgradeLevels() };
+  return {
+    crumbs: 0,
+    pigeons,
+    upgrades: createUpgradeLevels(),
+    totalEarnedCrumbs: 0,
+    achievements: createAchievementState(),
+  };
 }
 
 /** Приводим любые данные из localStorage к корректному состоянию. */
@@ -98,6 +111,18 @@ function sanitize(raw) {
     );
   });
 
+  // Достижения из старых сохранений отсутствуют: это невыполненные достижения,
+  // а не выданные награды. Проверка условий при загрузке не запускается.
+  state.totalEarnedCrumbs = safeAmount(raw.totalEarnedCrumbs);
+
+  const savedAchievements =
+    raw.achievements && typeof raw.achievements === 'object' && !Array.isArray(raw.achievements)
+      ? raw.achievements
+      : {};
+  ACHIEVEMENT_CATALOG.forEach((definition) => {
+    state.achievements[definition.id] = savedAchievements[definition.id] === true;
+  });
+
   // `income` в сохранении только для информации: доход и сила клика всегда
   // пересчитываются из купленных голубей и уровней улучшений.
   return state;
@@ -107,11 +132,15 @@ export class Economy {
   constructor(storage) {
     this.storage = resolveStorage(storage);
     this.listeners = new Set();
+    this.achievementListeners = new Set();
+    this._unlockQueue = [];
 
     const saved = this._read();
     this.crumbs = saved.crumbs;
     this.pigeons = saved.pigeons;
     this.upgrades = saved.upgrades;
+    this.totalEarnedCrumbs = saved.totalEarnedCrumbs;
+    this.achievements = saved.achievements;
     this._recalculate();
   }
 
@@ -123,6 +152,8 @@ export class Economy {
       clickPower: this.clickPower,
       pigeons: { ...this.pigeons },
       upgrades: { ...this.upgrades },
+      totalEarnedCrumbs: this.totalEarnedCrumbs,
+      achievements: { ...this.achievements },
     };
   }
 
@@ -136,6 +167,15 @@ export class Economy {
     this.listeners.add(listener);
     listener(this.getState());
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Подписка на свежеполученные достижения. Слушатель получает пачку
+   * определений — UI ставит их в очередь уведомлений, а не показывает все сразу.
+   */
+  onAchievement(listener) {
+    this.achievementListeners.add(listener);
+    return () => this.achievementListeners.delete(listener);
   }
 
   /**
@@ -153,7 +193,10 @@ export class Economy {
     this.crumbs = Math.min(MAX_CRUMBS, round2(before + value));
     const gained = round2(this.crumbs - before);
 
-    if (gained > 0) this._commit();
+    if (gained > 0) {
+      this.totalEarnedCrumbs = safeAmount(this.totalEarnedCrumbs + gained);
+      this._commit();
+    }
     return gained;
   }
 
@@ -165,7 +208,10 @@ export class Economy {
     this.crumbs = Math.min(MAX_CRUMBS, round2(before + this.income));
     const gained = round2(this.crumbs - before);
 
-    if (gained > 0) this._commit();
+    if (gained > 0) {
+      this.totalEarnedCrumbs = safeAmount(this.totalEarnedCrumbs + gained);
+      this._commit();
+    }
   }
 
   canBuy(id) {
@@ -275,6 +321,53 @@ export class Economy {
   }
 
   // -------------------------------------------------------------------------
+  // Достижения
+  // -------------------------------------------------------------------------
+
+  /** Сколько голубей куплено всего (все типы по одному). */
+  getTotalPigeons() {
+    return PIGEON_CATALOG.reduce((sum, pigeon) => sum + this.getPurchased(pigeon.id), 0);
+  }
+
+  /** Метрики для чистых функций из achievements.js. */
+  getAchievementMetrics() {
+    return {
+      totalCrumbs: this.totalEarnedCrumbs,
+      pigeons: this.getTotalPigeons(),
+      income: this.income,
+      clickPower: this.clickPower,
+      roofUpgrade: this.getUpgradeLevel('betterRoof'),
+    };
+  }
+
+  getAchievementStatuses() {
+    return buildAchievementStatuses(this.getAchievementMetrics(), this.achievements);
+  }
+
+  /**
+   * Проверка после каждой операции, меняющей экономику. Награды тоже считаются
+   * заработком, поэтому цикл повторяется, пока не останется новых условий.
+   * Каждое achievement отмечается один раз: повторной выдачи не бывает.
+   */
+  _checkAchievements() {
+    for (let pass = 0; pass <= ACHIEVEMENT_CATALOG.length; pass += 1) {
+      const metrics = this.getAchievementMetrics();
+      const newly = ACHIEVEMENT_CATALOG.filter(
+        (definition) => !this.achievements[definition.id] && isAchievementMet(definition, metrics),
+      );
+      if (!newly.length) break;
+
+      newly.forEach((definition) => {
+        this.achievements[definition.id] = true;
+        const reward = safeAmount(definition.reward);
+        this.totalEarnedCrumbs = safeAmount(this.totalEarnedCrumbs + reward);
+        this.crumbs = safeAmount(this.crumbs + reward);
+        this._unlockQueue.push(definition);
+      });
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Расчёты и сохранение
   // -------------------------------------------------------------------------
 
@@ -292,9 +385,15 @@ export class Economy {
   }
 
   _commit() {
+    this._checkAchievements();
     this._save();
     const state = this.getState();
     this.listeners.forEach((listener) => listener(state));
+
+    if (this._unlockQueue.length) {
+      const batch = this._unlockQueue.splice(0);
+      this.achievementListeners.forEach((listener) => listener(batch));
+    }
   }
 
   _save() {
@@ -309,6 +408,8 @@ export class Economy {
           baseIncome: this.baseIncome,
           income: this.income,
           clickPower: this.clickPower,
+          totalEarnedCrumbs: this.totalEarnedCrumbs,
+          achievements: this.achievements,
         }),
       );
     } catch {
