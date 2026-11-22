@@ -2,9 +2,10 @@
  * Экономика игры: крошки, купленные голуби, улучшения, пассивный доход
  * и сохранение. Это единственный модуль, который меняет игровые числа.
  *
- * Доход голубей и бонусы улучшений считаются раздельно; в сохранении лежит
- * только уровни, а не готовые эффекты. При загрузке всё пересчитывается заново.
- * Здесь же учитываются все заработанные крошки и выдаются награды достижений.
+ * Доход голубей, бонусы улучшений и районов считаются раздельно; в сохранении
+ * лежат только уровни и флаги открытых районов, а не готовые эффекты.
+ * При загрузке всё пересчитывается заново. Здесь же учитываются все заработанные
+ * крошки и выдаются награды достижений.
  */
 
 import { PIGEON_CATALOG, SHOP_ITEMS, getPigeon } from './pigeons.js';
@@ -22,13 +23,20 @@ import {
   getClickPower,
   getIncomeMultiplier,
 } from './upgrades.js';
+import {
+  getDistrict,
+  createDistrictState,
+  normalizeDistrictState,
+  getDistrictIncomeBonus,
+  buildDistrictStatus,
+} from './districts.js';
 import { formatAmount } from './format.js';
 
 /** Ключ сохранения не меняем: старый прогресс игрока должен подхватиться. */
 export const SAVE_KEY = 'pigeon-empire.save.v1';
 
-/** v4 добавил достижения и суммарно заработанные крошки; старые ключи мигрируют. */
-export const SAVE_VERSION = 4;
+/** v5 добавил открытые районы города; старые сохранения мигрируют без потерь. */
+export const SAVE_VERSION = 5;
 
 /** Страховка от случайно испорченного/огромного значения в сохранении. */
 const MAX_CRUMBS = 1_000_000_000_000;
@@ -76,6 +84,7 @@ function emptyState() {
     crumbs: 0,
     pigeons,
     upgrades: createUpgradeLevels(),
+    districts: createDistrictState(),
     totalEarnedCrumbs: 0,
     achievements: createAchievementState(),
   };
@@ -123,8 +132,12 @@ function sanitize(raw) {
     state.achievements[definition.id] = savedAchievements[definition.id] === true;
   });
 
-  // `income` в сохранении только для информации: доход и сила клика всегда
-  // пересчитываются из купленных голубей и уровней улучшений.
+  // Районы в старых сохранениях отсутствуют: открыта только стартовая крыша.
+  // Неизвестные ID, повторы и повреждённые значения отбрасываются функцией ниже.
+  state.districts = normalizeDistrictState(raw.districts === undefined ? raw.openedDistricts : raw.districts);
+
+  // `income` и `districtBonus` в сохранении только для информации: доход и сила
+  // клика всегда пересчитываются из фактического состояния, а не из файла.
   return state;
 }
 
@@ -139,9 +152,14 @@ export class Economy {
     this.crumbs = saved.crumbs;
     this.pigeons = saved.pigeons;
     this.upgrades = saved.upgrades;
+    this.districts = saved.districts;
     this.totalEarnedCrumbs = saved.totalEarnedCrumbs;
     this.achievements = saved.achievements;
     this._recalculate();
+
+    // Сразу фиксируем миграцию: нормализованные районы и новая версия попадут
+    // в файл даже до первого действия игрока. Никакие поля состояния не теряются.
+    this._save();
   }
 
   getState() {
@@ -152,6 +170,8 @@ export class Economy {
       clickPower: this.clickPower,
       pigeons: { ...this.pigeons },
       upgrades: { ...this.upgrades },
+      districts: { ...this.districts },
+      districtBonus: getDistrictIncomeBonus(this.districts),
       totalEarnedCrumbs: this.totalEarnedCrumbs,
       achievements: { ...this.achievements },
     };
@@ -321,6 +341,56 @@ export class Economy {
   }
 
   // -------------------------------------------------------------------------
+  // Районы города
+  // -------------------------------------------------------------------------
+
+  /** Статус района для карты: открыт, цена, доступность и нехватка крошек. */
+  getDistrictStatus(id) {
+    return buildDistrictStatus(id, this.districts, this.crumbs);
+  }
+
+  canOpenDistrict(id) {
+    const status = this.getDistrictStatus(id);
+    return !!(status && status.affordable);
+  }
+
+  /**
+   * Безопасное открытие района. Все проверки и списание происходят здесь,
+   * UI только показывает результат. Синхронность исключает двойное списание:
+   * второй вызов увидит район уже открытым.
+   */
+  openDistrict(id) {
+    const definition = getDistrict(id);
+    if (!definition) return { ok: false, reason: 'unknown' };
+
+    if (this.districts[id] === true) {
+      return { ok: false, reason: 'already-open', district: definition };
+    }
+
+    const price = definition.price;
+    if (!Number.isFinite(price) || price < 0) {
+      return { ok: false, reason: 'invalid', district: definition };
+    }
+
+    if (this.crumbs < price) {
+      return {
+        ok: false,
+        reason: 'insufficient',
+        district: definition,
+        price,
+        missing: round2(price - this.crumbs),
+      };
+    }
+
+    this.crumbs = round2(this.crumbs - price);
+    this.districts[id] = true;
+    this._recalculate();
+    this._commit();
+
+    return { ok: true, district: definition, price };
+  }
+
+  // -------------------------------------------------------------------------
   // Достижения
   // -------------------------------------------------------------------------
 
@@ -374,7 +444,11 @@ export class Economy {
   _recalculate() {
     this.baseIncome = this._calculateBaseIncome();
     this.clickPower = getClickPower(this.upgrades);
-    this.income = round2(this.baseIncome * getIncomeMultiplier(this.upgrades));
+
+    // Бонусы улучшений и районов складываются до умножения на базу: один
+    // общий множитель, одно округление результата и никакого двойного счёта.
+    const districtBonus = getDistrictIncomeBonus(this.districts);
+    this.income = round2(this.baseIncome * (getIncomeMultiplier(this.upgrades) + districtBonus));
   }
 
   _calculateBaseIncome() {
@@ -405,6 +479,7 @@ export class Economy {
           crumbs: this.crumbs,
           pigeons: this.pigeons,
           upgrades: this.upgrades,
+          districts: this.districts,
           baseIncome: this.baseIncome,
           income: this.income,
           clickPower: this.clickPower,

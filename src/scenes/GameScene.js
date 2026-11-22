@@ -10,6 +10,7 @@ import { PigeonFlock } from '../objects/PigeonFlock.js';
 import { Hud } from '../ui/Hud.js';
 import { ShopPanel } from '../ui/ShopPanel.js';
 import { AchievementsPanel } from '../ui/AchievementsPanel.js';
+import { CityMapPanel } from '../ui/CityMapPanel.js';
 import { AchievementToast } from '../ui/AchievementToast.js';
 
 const PEPPER_Y = 470;
@@ -49,15 +50,27 @@ export class GameScene extends Phaser.Scene {
     this.hud = new Hud(this, {
       onShop: () => {
         this.achievements.close();
+        this.cityMap.close();
         this.shop.open();
       },
       onAchievements: () => {
         this.shop.close();
+        this.cityMap.close();
         this.achievements.open();
+      },
+      onMap: () => {
+        this.shop.close();
+        this.achievements.close();
+        this.cityMap.open();
       },
     });
     this.shop = new ShopPanel(this, this.economy);
     this.achievements = new AchievementsPanel(this, this.economy);
+    this.cityMap = new CityMapPanel(this, this.economy, {
+      onDistrictOpened: (district) => {
+        this.hud.showToast(`Район «${district.name}» открыт! Доход вырос.`);
+      },
+    });
     this.achievementToast = new AchievementToast(this);
     this.flock = new PigeonFlock(this, this.economy, this.pepper);
 
@@ -97,6 +110,7 @@ export class GameScene extends Phaser.Scene {
     if (this._pepperShadow) this._pepperShadow.setPosition(pepperX, PEPPER_Y + 104);
     if (this.shop) this.shop.handleResize();
     if (this.achievements) this.achievements.handleResize();
+    if (this.cityMap) this.cityMap.handleResize();
     if (this.flock) this.flock.layout();
   }
 
@@ -145,6 +159,7 @@ export class GameScene extends Phaser.Scene {
     if (this.flock) this.flock.destroy();
     if (this.shop) this.shop.destroy();
     if (this.achievements) this.achievements.destroy();
+    if (this.cityMap) this.cityMap.destroy();
     if (this.achievementToast) this.achievementToast.destroy();
   }
 }

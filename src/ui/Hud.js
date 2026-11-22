@@ -3,14 +3,18 @@ import { COLORS, CSS } from '../game/palette.js';
 import { formatAmount } from '../game/format.js';
 import { createButton } from './createButton.js';
 
-const CRUMBS_PILL = { x: 40, y: 96, width: 300, height: 72 };
-const INCOME_PILL = { x: 360, y: 96, width: 200, height: 72 };
-const CLICK_PILL = { x: 580, y: 96, width: 240, height: 72 };
-const ACHIEVEMENTS_BUTTON = { x: 840, y: 96, width: 180, height: 72 };
-const SHOP_BUTTON = { x: 1040, y: 96, width: 200, height: 72 };
+const HUD_Y = 96;
+const HUD_HEIGHT = 72;
+/** Пять плашек и три кнопки: 1120 px контента + 5 зазоров по 16 = 1200 px. */
+const CRUMBS_PILL = { x: 40, y: HUD_Y, width: 270, height: HUD_HEIGHT };
+const INCOME_PILL = { x: 326, y: HUD_Y, width: 190, height: HUD_HEIGHT };
+const CLICK_PILL = { x: 532, y: HUD_Y, width: 200, height: HUD_HEIGHT };
+const MAP_BUTTON = { x: 748, y: HUD_Y, width: 140, height: HUD_HEIGHT };
+const ACHIEVEMENTS_BUTTON = { x: 904, y: HUD_Y, width: 150, height: HUD_HEIGHT };
+const SHOP_BUTTON = { x: 1070, y: HUD_Y, width: 170, height: HUD_HEIGHT };
 
 /**
- * Верхний интерфейс: название, счётчик крошек, доход и кнопка магазина.
+ * Верхний интерфейс: крошки, доход, сила клика и три кнопки окон.
  * Всё уложено внутрь 1280x720 с отступом 40 px, поэтому при FIT-масштабировании
  * (и на мобильных) ничего не обрезается.
  */
@@ -19,6 +23,7 @@ export class Hud {
     this.scene = scene;
     this.onShop = options.onShop || null;
     this.onAchievements = options.onAchievements || null;
+    this.onMap = options.onMap || null;
     this.crumbs = 0;
     this.income = 0;
     this.clickPower = 1;
@@ -28,6 +33,7 @@ export class Hud {
     this._buildCrumbs();
     this._buildIncome();
     this._buildClickPower();
+    this._buildMapButton();
     this._buildAchievementsButton();
     this._buildShopButton();
   }
@@ -56,12 +62,12 @@ export class Hud {
     bg.strokeRoundedRect(0, 0, width, height, height / 2);
 
     const icon = this.scene.add.graphics();
-    this._paintCrumbIcon(icon, 40, height / 2);
+    this._paintCrumbIcon(icon, 36, height / 2);
 
     this.crumbsText = this.scene.add
-      .text(78, height / 2, '0', {
+      .text(68, height / 2, '0', {
         fontFamily: CSS.fontFamily,
-        fontSize: '36px',
+        fontSize: '32px',
         fontStyle: 'bold',
         color: CSS.white,
       })
@@ -93,17 +99,17 @@ export class Hud {
     // пиктограмма «рост»: три столбика
     const icon = this.scene.add.graphics();
     icon.fillStyle(COLORS.accent, 1);
-    icon.fillRoundedRect(28, 44, 8, 12, 3);
-    icon.fillRoundedRect(42, 36, 8, 20, 3);
-    icon.fillRoundedRect(56, 26, 8, 30, 3);
+    icon.fillRoundedRect(22, 44, 7, 12, 3);
+    icon.fillRoundedRect(35, 36, 7, 20, 3);
+    icon.fillRoundedRect(48, 26, 7, 30, 3);
     icon.lineStyle(3, COLORS.accent, 0.7);
-    icon.lineBetween(30, 26, 44, 18);
-    icon.lineBetween(44, 18, 60, 22);
+    icon.lineBetween(24, 26, 37, 18);
+    icon.lineBetween(37, 18, 51, 22);
 
     this.incomeText = this.scene.add
-      .text(82, height / 2, '0/сек', {
+      .text(68, height / 2, '0/сек', {
         fontFamily: CSS.fontFamily,
-        fontSize: '27px',
+        fontSize: '22px',
         fontStyle: 'bold',
         color: CSS.muted,
       })
@@ -126,21 +132,39 @@ export class Hud {
     // пиктограмма «удар»: небольшой хлебный брусок
     const icon = this.scene.add.graphics();
     icon.fillStyle(COLORS.crumb, 1);
-    icon.fillRoundedRect(24, 26, 32, 22, 8);
+    icon.fillRoundedRect(20, 26, 30, 22, 8);
     icon.fillStyle(COLORS.crumbDark, 0.5);
-    icon.fillCircle(34, 34, 2.5);
-    icon.fillCircle(47, 40, 2);
+    icon.fillCircle(30, 34, 2.5);
+    icon.fillCircle(42, 40, 2);
 
     this.clickText = this.scene.add
-      .text(72, height / 2, '+1 за клик', {
+      .text(60, height / 2, '+1 за клик', {
         fontFamily: CSS.fontFamily,
-        fontSize: '24px',
+        fontSize: '21px',
         fontStyle: 'bold',
         color: CSS.white,
       })
       .setOrigin(0, 0.5);
 
     container.add([bg, icon, this.clickText]);
+  }
+
+  /** Кнопка карты города рядом с магазином и достижениями. */
+  _buildMapButton() {
+    const { x, y, width, height } = MAP_BUTTON;
+
+    this.mapButton = createButton(this.scene, {
+      x,
+      y,
+      width,
+      height,
+      label: 'КАРТА',
+      fontSize: 24,
+      onClick: () => {
+        if (this.onMap) this.onMap();
+        else this.showToast('Карта скоро откроется');
+      },
+    });
   }
 
   /** Отдельная кнопка достижений рядом с магазином. */
@@ -153,7 +177,7 @@ export class Hud {
       width,
       height,
       label: 'ДОСТИЖЕНИЯ',
-      fontSize: 20,
+      fontSize: 17,
       onClick: () => {
         if (this.onAchievements) this.onAchievements();
         else this.showToast('Достижения скоро откроются');
@@ -169,7 +193,7 @@ export class Hud {
       width,
       height,
       label: 'МАГАЗИН',
-      fontSize: 26,
+      fontSize: 22,
       onClick: () => {
         if (this.onShop) this.onShop();
         else this.showToast('Магазин скоро откроется');
